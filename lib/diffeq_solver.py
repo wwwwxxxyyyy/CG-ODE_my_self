@@ -12,20 +12,20 @@ import scipy.sparse as sp
 def compute_edge_initials(first_point_enc, num_atoms,w_node_to_edge_initial):
     '''
 
-    :param first_point_enc: [K*N,D]
+    :param first_point_enc: [K*N,D] [8*80,30]
     :return: [K*N*N,D']
     '''
-    node_feature_num = first_point_enc.shape[1]
+    node_feature_num = first_point_enc.shape[1] # 8*80
     fully_connected = np.ones([num_atoms, num_atoms])
     rel_send = np.array(utils.encode_onehot(np.where(fully_connected)[0]),
                         dtype=np.float32)  # every node as one-hot[10000], (N*N,N)
     rel_rec = np.array(utils.encode_onehot(np.where(fully_connected)[1]),
-                       dtype=np.float32)  # every node as one-hot[10000], (N*N,N)
+                       dtype=np.float32)  # every node as one-hot[10000], (N*N,N) 
 
     rel_send = torch.FloatTensor(rel_send).to(first_point_enc.device)
     rel_rec = torch.FloatTensor(rel_rec).to(first_point_enc.device)
 
-    first_point_enc = first_point_enc.view(-1, num_atoms, node_feature_num)  # [K,N,D]
+    first_point_enc = first_point_enc.view(-1, num_atoms, node_feature_num)  # [K,N,D] [8,80,30]
 
     senders = torch.matmul(rel_send, first_point_enc)  # [K,N*N,D]
     receivers = torch.matmul(rel_rec, first_point_enc)  # [K,N*N,D]
@@ -57,30 +57,30 @@ class DiffeqSolver(nn.Module):
     def forward(self, first_point,time_steps_to_predict,w_node_to_edge_initial):
         '''
 
-        :param first_point:  [K*N,D]
-        :param edge_initials: [K*N*N,D]
+        :param first_point:  [K*N,D]  [8*80,30]
+        :param edge_initials: [K*N*N,D] [8*80*80,30]
         :param time_steps_to_predict: [t]
         :return:
         '''
 
-        # Node ODE Function
-        n_traj,feature_node = first_point.size()[0], first_point.size()[1]  #[K*N,d]
-        if self.args.augment_dim > 0:
+        # Node ODE Function # augment_dim ==0 这里没用到
+        n_traj,feature_node = first_point.size()[0], first_point.size()[1]  #[K*N,d] 
+        if self.args.augment_dim > 0:  
             aug_node = torch.zeros(first_point.shape[0], self.args.augment_dim).to(self.device) #[K*N,D_aug]
             first_point = torch.cat([first_point, aug_node], 1) #[K*N,d+D_aug]
             feature_node += self.args.augment_dim
 
         # Edge initialization: h_ij = f([u_i,u_j])
-        edge_initials = compute_edge_initials(first_point, self.num_atoms, w_node_to_edge_initial)  # [K*N*N,D_edge]
+        edge_initials = compute_edge_initials(first_point, self.num_atoms, w_node_to_edge_initial)  # [K*N*N,D_edge] = [8*80*80,30]
         assert (not torch.isnan(edge_initials).any())
 
-        node_edge_initial = torch.cat([first_point,edge_initials],0)  #[K*N + K*N*N,D+D_aug]
+        node_edge_initial = torch.cat([first_point,edge_initials],0)  #[K*N + K*N*N,D+D_aug]  
         # Set index
-        K_N = int(node_edge_initial.shape[0]/(self.num_atoms+1))
-        K = K_N/self.num_atoms
+        K_N = int(node_edge_initial.shape[0]/(self.num_atoms+1))  # 640=8*80
+        K = K_N/self.num_atoms # 8 = 640 /80
         self.ode_func.set_index_and_graph(K_N,K)
 
-        node_initial = node_edge_initial[:K_N,:]
+        node_initial = node_edge_initial[:K_N,:] # [640,30]
         self.ode_func.set_initial_z0(node_initial)
 
 

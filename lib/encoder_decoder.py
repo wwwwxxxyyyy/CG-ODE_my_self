@@ -68,25 +68,25 @@ class Edge_NRI(nn.Module):
         # NOTE: Assumes that we have the same graph across all samples.
         '''
 
-        :param node_inputs: [K*N,D]
-        :param edges: [K*N*N,D], after normalize
+        :param node_inputs: [K*N,D] =[8*80,30]
+        :param edges: [K*N*N,D], after normalize [8*80*80,30]
         :return:
         '''
-        node_feature_num = node_inputs.shape[1]
-        edge_feature_num = edges_input.shape[-1]
+        node_feature_num = node_inputs.shape[1] # 30
+        edge_feature_num = edges_input.shape[-1] # 30
 
-        node_inputs = node_inputs.view(-1, num_atoms, node_feature_num)  # [K,N,D]
+        node_inputs = node_inputs.view(-1, num_atoms, node_feature_num)  # [K,N,D] = [8,80,30]
 
         senders = torch.matmul(self.rel_send, node_inputs)  # [K,N*N,D]
         receivers = torch.matmul(self.rel_rec, node_inputs)  # [K,N*N,D]
-        edges = torch.cat([senders, receivers], dim=-1)  # [K,N*N,2D]
+        edges = torch.cat([senders, receivers], dim=-1)  # [K,N*N,2D] 
 
         # Compute z for edges
-        edges_from_node = F.gelu(self.w_node2edge(edges))
+        edges_from_node = F.gelu(self.w_node2edge(edges))  # 公式(6.2)f_e中的部分
         edges_input = self.layer_norm(edges_input)
-        edges_self = self.edge_self_evolve(edges_input) #[K*N*N,D]
+        edges_self = self.edge_self_evolve(edges_input) #[K*N*N,D] #公式(6.2)f_self部分
         edges_self = edges_self.view(-1,num_atoms*num_atoms,edge_feature_num) #[K,N*N,D]
-        edges_z = self.dropout(edges_from_node + edges_self) #[K,N*N,D]
+        edges_z = self.dropout(edges_from_node + edges_self) #[K,N*N,D]  #公式(6.2)
 
         # edge2value
         edge_2_value = torch.squeeze(F.relu(self.w_edge2value(edges_z)),dim=-1) #[K,N*N]

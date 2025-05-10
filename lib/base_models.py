@@ -159,13 +159,13 @@ class VAE_Baseline(nn.Module):
 		# Compute likelihood of all the points
 		rec_likelihood_node = self.get_gaussian_likelihood(
 			batch_dict_decoder["data"], pred_node,temporal_weights,
-			mask=None)   #negative value
+			mask=None)   #negative value  # 公式(8) L_node
 
 		rec_likelihood_edge = self.get_gaussian_likelihood(
 			truth_graph, pred_edge, temporal_weights,
-			mask=None)  # negative value
+			mask=None)  # negative value # 公式(8) L_edge
 
-		rec_likelihood = (1-edge_lamda)*rec_likelihood_node + edge_lamda * rec_likelihood_edge
+		rec_likelihood = (1-edge_lamda)*rec_likelihood_node + edge_lamda * rec_likelihood_edge  #公式(7)中的前半部分
 
 
 		mape_node = self.get_loss(
@@ -179,7 +179,7 @@ class VAE_Baseline(nn.Module):
 
 
 
-		# loss
+		# loss  elbo
 
 		loss = - torch.logsumexp(rec_likelihood - kl_coef * kldiv_z0,0)
 		if torch.isnan(loss):

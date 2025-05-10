@@ -15,8 +15,8 @@ from torch_scatter import scatter_add
 
 
 def normalize_graph_asymmetric(edge_index,edge_weight, num_nodes):
+    #基于出度的非对称归一化
     '''
-
     :param edge_index: [num_edges,2], torch.LongTensor
     :param edge_weight: [num_edge]
     :param num_nodes:
@@ -39,8 +39,6 @@ def normalize_graph_asymmetric(edge_index,edge_weight, num_nodes):
     assert (not torch.isnan(edge_weight_normalized).any())
 
     return edge_weight_normalized
-
-
 class TemporalEncoding(nn.Module):
 
     def __init__(self, d_hid):
@@ -63,13 +61,11 @@ class TemporalEncoding(nn.Module):
         position_term[:,1::2] = torch.cos(position_term[:,1::2])
 
         return position_term
-
-
+#公式(2)整体
 class GTrans(MessagePassing):
     '''
     Multiply attention by edgeweight
     '''
-
     def __init__(self, n_heads=1,d_input=6, d_output=6,dropout = 0.1,**kwargs):
         super(GTrans, self).__init__(aggr='add', **kwargs)
         self.n_heads = n_heads
@@ -115,6 +111,7 @@ class GTrans(MessagePassing):
 
         # Edge normalization if using multiplication
         edge_weight = normalize_graph_asymmetric(edge_index,edge_weight,time_nodes.shape[0])
+        # 基于出度的非对称归一化 也就是文中公式(6)的归一化邻接矩阵过程
         assert (torch.sum(edge_weight<0)==0) and (torch.sum(edge_weight>1) == 0)
 
         return self.propagate(edge_index, x=x, edges_weight=edge_weight, edge_time=edge_time, residual=residual)
@@ -184,8 +181,6 @@ class GTrans(MessagePassing):
 
     def __repr__(self):
         return '{}'.format(self.__class__.__name__)
-
-
 class Node_GCN(nn.Module):
     """Node ODE function."""
 
@@ -197,7 +192,7 @@ class Node_GCN(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(out_dims,elementwise_affine = False)
 
-        glorot(self.w_node)
+        glorot(self.w_node) #用 Glorot(Xavier)初始化对w_node进行初始化
 
 
     def forward(self, inputs, edges,z_0):
@@ -208,18 +203,18 @@ class Node_GCN(nn.Module):
         :param z_0: [K*N,D],
         :return:
         '''
-        inputs = self.layer_norm(inputs)
+        inputs = self.layer_norm(inputs) # [640,30] = [8*80,30]
 
-        num_feature = inputs.shape[-1]
+        num_feature = inputs.shape[-1] # 30
 
-        edges = edges.view(-1,self.num_atoms,self.num_atoms) #[K,N,N]
-        inputs_transform = torch.matmul(inputs,self.w_node) #[K*N,D]
-        inputs_transform = inputs_transform.view(-1,self.num_atoms,num_feature) #[K,N,D]
+        edges = edges.view(-1,self.num_atoms,self.num_atoms) # [K,N,N] = [8,80,80]
+        inputs_transform = torch.matmul(inputs,self.w_node) # [8*80,in_dims] -> [8*80,out_dims]  ZW
+        inputs_transform = inputs_transform.view(-1,self.num_atoms,num_feature) # [K,N,D] = [8,80,out_dims]
 
-        x_hidden = torch.bmm(edges,inputs_transform) #[K,N,D]
+        x_hidden = torch.bmm(edges,inputs_transform) #[K,N,D] AZW
         x_hidden = x_hidden.view(-1,num_feature) #[K*N,D]
 
-        x_new = F.gelu(x_hidden) - inputs + z_0
+        x_new = F.gelu(x_hidden) - inputs + z_0 #公式(6.1)
 
         return self.dropout(x_new)
 
@@ -231,11 +226,14 @@ class GeneralConv(nn.Module):
     def __init__(self, conv_name, in_hid, out_hid, n_heads, dropout,args):
         super(GeneralConv, self).__init__()
         self.conv_name = conv_name
-        if self.conv_name == 'GTrans':
+        if self.conv_name == 'GTrans': #公式(2)整体
             self.base_conv = GTrans(n_heads, in_hid, out_hid, dropout)
+
+
+        '''
         elif self.conv_name == "Node":
             self.base_conv = Node_GCN(in_hid,out_hid,args.num_atoms,dropout)
-
+        '''
 
     def forward(self, x, edge_index, edge_weight, x_time,edge_time):
 
@@ -253,14 +251,14 @@ class GNN(nn.Module):
         self.n_hid = n_hid
         self.out_dim = out_dim
         self.drop = nn.Dropout(dropout)
-        self.is_encoder = is_encoder
+        self.is_encoder = is_encoder # 判断是否是encoder中的GNN
 
 
         if is_encoder:
             # If encoder, adding 1.) sequence_W 2.)transform_W ( to 2*z_dim).
             self.sequence_w = nn.Linear(n_hid,n_hid) # for encoder
             self.hidden_to_z0 = nn.Sequential(
-		        nn.Linear(n_hid, n_hid//2),
+		        nn.Linear(n_hid, n_hid//2), 
 		        nn.Tanh(),
 		        nn.Linear(n_hid//2, out_dim))
             self.adapt_w = nn.Linear(in_dim,n_hid)
@@ -285,16 +283,15 @@ class GNN(nn.Module):
             h_t = self.drop(F.gelu(self.adapt_w(x)))  #initial input for encoder
 
 
-        for gc in self.gcs:
+        for gc in self.gcs: 
             h_t = gc(h_t, edge_index, edge_weight, x_time,edge_time)  #[num_nodes,d]
 
-        ### Output
-        if batch!= None:  ## for encoder
+        ### Output  公式(3)和(4)
+        if batch!= None:  ## for encoder # encdoer数据才通过batch训练
             batch_new = self.rewrite_batch(batch,batch_y) #group by balls
 
             h_t += self.temporal_net(x_time)
-            attention_vector = F.gelu(
-                self.sequence_w(global_mean_pool(h_t, batch_new)))  # [num_ball,d] ,graph vector with activation Relu
+            attention_vector = F.gelu(self.sequence_w(global_mean_pool(h_t, batch_new)))  # [num_ball,d] ,graph vector with activation Relu
             attention_vector_expanded = self.attention_expand(attention_vector, batch, batch_y)  # [num_nodes,d]
             attention_nodes = torch.sigmoid(
                 torch.squeeze(torch.bmm(torch.unsqueeze(attention_vector_expanded, 1), torch.unsqueeze(h_t, 2)))).view(
